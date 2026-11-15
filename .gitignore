@@ -1,1 +1,14 @@
 _personal/*
+
+# Run artifacts (logits, checkpoints, cached features) stay on the machine that produced them
+artifacts/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Per-machine Claude Code settings
+.claude/settings.local.json
