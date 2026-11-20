@@ -1,43 +1,101 @@
 # DD2610 Final Project · Asymmetric Duos
 
-This project studies [Asymmetric Duos: Sidekicks Improve Uncertainty](docs/asymmetrics_duos.pdf) by Tim G. Zhou, Evan Shelhamer, and Geoff Pleiss. The method pairs a large image classifier with a cheaper sidekick. Two weights fitted on validation logits determine how much each classifier contributes. The paper asks whether the pair improves predictions and helps identify errors at a modest increase in inference compute.
+## Introduction
 
-## Branches
+An image classifier can have high accuracy and still be confidently wrong on individual images. We study whether a smaller classifier can help a larger model recognize its errors at a modest inference cost. We will reproduce the paper’s core experiments with the released implementation in Part A, then use a hosted LLM to reconstruct the method from the paper alone in Part B. Part B will also test whether changing the two models’ weights for each image improves uncertainty estimates.
 
-| Branch | What belongs there |
-| --- | --- |
-| `main` | The authors’ released code, the paper, and this guide. The import is commit `54717af`. |
-| `partA` | Our scoped replication using the released implementation. Keep experiment configs, run instructions, and results documentation here. |
-| `partB-LLM` | The paper-only implementation. The paper is the sole reference for this part. Work is deferred. |
+This overview describes the research plan. Each implementation branch will have its own README with run instructions, findings, and deviations from the paper.
 
-Use `git switch partA` for Part A work. Return to `main` to browse the reference implementation and project overview.
+## Paper background
 
-## Part A · Scoped replication
+In [*Asymmetric Duos: Sidekicks Improve Uncertainty*](assets/asymmetric-duos-paper.pdf), Tim G. Zhou, Evan Shelhamer, and Geoff Pleiss pair a large image classifier with a cheaper classifier called a *sidekick*. Both models score the same image. The authors minimize validation negative log-likelihood to fit two weights that combine the logits into a class prediction and a confidence estimate. These weights are fixed across images in the paper’s method.
 
-We target Figures 3–6 and use Appendix G Figures 11 and 14 to compare our two base models on Caltech-256. We keep one setting for each purpose in the original study.
+An ensemble of similarly sized classifiers adds roughly one model’s inference cost per extra member. The paper reports that cheaper sidekicks often improve accuracy, help distinguish correct predictions from errors, and let a classifier abstain more effectively. The authors observe improvements with about 10–20% extra FLOPs in many settings. We target the comparisons in Figures 3–6. The reference implementation is in the [authors’ GitHub repository](https://github.com/timgzhou/asymmetric-duos).
 
-| Dataset | Purpose | Protocol |
+## Our replication method
+
+![The authors’ experiment pipeline and supporting studies above our narrower replication plan, with estimated FLOP balance for six ResNet sidekicks](assets/asymmetric-duos-replication.png)
+
+*The upper pipeline maps the authors’ core experiments and supporting studies. The lower pipeline shows our replication scope. The FLOP values are planning estimates.*
+
+### Dataset choices
+
+We retain the three questions the original benchmarks were chosen to address. Caltech-256 tests transfer to a new classification task, and ImageNetV2 tests distribution shift using the ImageNet-1K classifiers. This lets us omit iWildCam and iWildCam-OOD and avoid a second transfer training sweep. Our conclusions will cover object classification and the ImageNet-to-ImageNetV2 shift. The camera-location shift and class imbalance in iWildCam are outside that scope.
+
+| Benchmark | What it tests | Planned protocol |
 | --- | --- | --- |
-| ImageNet-1K | Large-scale evaluation | Use pretrained classifiers. Split the 50,000 official validation images into 2,500 for calibration and 47,500 for testing. |
-| ImageNetV2 | Distribution shift | Evaluate the same ImageNet classifiers and temperatures on MatchedFrequency, our chosen variant. |
-| Caltech-256 | Transfer to a new task | Use a 70/15/15 train/validation/test split. Train the classifier head for 8 epochs, then fine-tune the whole model for 16 epochs. |
+| **ImageNet-1K** | Large-scale image classification | Use pretrained classifiers. Split the 50,000 official validation images into 2,500 for calibration and 47,500 for testing. |
+| **ImageNetV2** | Whether improvements carry over under distribution shift | Use the same ImageNet-1K checkpoints and calibration weights. Evaluate MatchedFrequency, our chosen variant because the paper does not name one. |
+| **Caltech-256** | Transfer to a new task | Use a 70/15/15 train/validation/test split. Train the classifier head for 8 epochs, then fine-tune the full model for 16 epochs, following Appendix A. |
 
-Our base models are TorchVision **ConvNeXt-Base** with `IMAGENET1K_V1` weights and **CLIP ViT-B/16** with the `timm` checkpoint `vit_base_patch16_clip_224.laion2b_ft_in12k_in1k`. Pair each base with TorchVision **ResNet-18, ResNet-50, and ResNet-101** to sweep three inference compute budgets within one sidekick family.
+We will time a Caltech-256 subset in Colab before committing GPU time to the full sweep. If the full run exceeds our budget, we will fix a shared reduced protocol before evaluating the test sets and document the change.
 
-Compare the temperature-scaled base, the equal-weight Duo, the learned-weight Duo, and the UQ-only ablation. UQ-only keeps the base model’s predicted class and reads the weighted Duo’s confidence for that class. Report top-1 accuracy, correctness prediction AUROC, area under the risk–coverage curve (AURC), and coverage at 98% accuracy (SAC@98). Plot scores against sidekick FLOPs divided by base FLOPs.
+### Base models and sidekicks
 
-Start with a Caltech-256 subset in Colab to estimate training time. Use the full split for the results above. For each run, record its paper reference, Git commit, dataset split and seed, checkpoint IDs, run configuration, GPU time, results location, and any deviations from the paper or reference code.
+We keep two of the paper’s four base models. **ConvNeXt-Base** is a convolutional model pretrained on ImageNet-1K. **CLIP ViT-B/16** is a transformer pretrained on a much larger image–text collection and adapted for ImageNet classification. This gives us one convolutional and one attention-based model, and two pretraining scales. SwinV2-Base would add another ImageNet-pretrained base, and EfficientNetV2-L would add another convolutional model at an intermediate pretraining scale. Omitting them reduces the number of fine-tuning runs. Our two bases let us check whether the trend appears in both settings, with architecture and pretraining varying together.
 
-The paper also reports greedy model soup, deep ensembles, throughput, entropy-based uncertainty, learned weight ratios, Bayesian baselines, and full results across all models and benchmarks. Those studies provide context for the four core tests.
+The ConvNeXt model uses TorchVision’s `IMAGENET1K_V1` weights. For CLIP, `timm` supplies the checkpoint `vit_base_patch16_clip_224.laion2b_ft_in12k_in1k`. A checkpoint is a saved set of model weights. This one starts from OpenCLIP pretraining on **LAION-2B** image–text pairs, followed by fine-tuning on **ImageNet-12K** and then **ImageNet-1K**. It has a trained ImageNet classifier head. The authors’ released `plot_2_duos.ipynb` names this exact checkpoint for their ViT-B figures. That identifies the pretrained model we will load. We will record our package version and weight file with the run. [timm model card](https://huggingface.co/timm/vit_base_patch16_clip_224.laion2b_ft_in12k_in1k)
 
-## Navigate the authors’ code
+We pair each base with **ResNet-10T, ResNet-18, ResNet-50, ResNet-101, ResNet-152, and ResNet-200D**. Six models give us distinct budgets from under 10% to near the base’s compute, with several intermediate points. Adding ResNet-34, for example, would provide little extra coverage near ResNet-50. Staying within the ResNet family makes the sweep easier to interpret while limiting the number of Caltech-256 fine-tunes. We will report the results as a ResNet sweep because the full paper tests many sidekick families. The four standard variants use TorchVision. The endpoints use `resnet10t.c3_in1k` and `resnet200d.ra2_in1k` from `timm`.
 
-| Location | What to find |
+### Comparisons and compute
+
+We compare the temperature-scaled base, an equal-weight Duo, the learned-weight Duo, and the UQ-only ablation. We report top-1 accuracy, correctness prediction AUROC, AURC, and SAC@98 against FLOP balance. Appendix G Figures 11 and 14 provide Caltech-256 references for the two chosen bases. The paper’s model soups, deep ensembles, Bayesian baselines, and supporting analyses give context for the core figures.
+
+The paper describes FLOPs per forward pass in §3.2 and in Figure 2. The released evaluator reads precomputed GFLOP values from model and pair metadata. The paper and public code do not identify the counter used to produce those values. We will use [`fvcore.nn.FlopCountAnalysis`](https://github.com/facebookresearch/fvcore/blob/main/docs/flop_count.md) for one 224 × 224 image in evaluation mode. It counts a multiply-add as one operation. For counting, we will disable fused attention in `timm` so the ViT’s attention matrix multiplications are visible to the tracer. We will record the counter version, input shape, and any unsupported operators with the results.
+
+## Terminology
+
+| Term | Meaning in this study |
 | --- | --- |
-| [Paper](docs/asymmetrics_duos.pdf) | §3 defines the method. Figures 3–6 report the main experiments. Appendices A–G provide protocols and additional results. |
-| [`load_data/`](load_data/) and [`load_models/`](load_models/) | Dataset splits, preprocessing, pretrained model loading, and Duo wrappers. |
-| [`train/`](train/) | Linear probing, fine-tuning, and hyperparameter search, plus model soup and IVON baselines. |
-| [`evaluate/`](evaluate/) | Export predictions, fit single-model and Duo temperatures, and compute metrics. |
-| [`utils/`](utils/) and [`plot_notebooks/`](plot_notebooks/) | Metric implementations and the authors’ plotting notebooks. |
+| **Logits** | The raw class scores produced before softmax. The Duo combines these scores before choosing a class and computing its confidence. |
+| **Linear probing (LP) and fine-tuning (FT)** | Train only the classifier head with the pretrained backbone frozen, then unfreeze and train the entire model on the new task. |
+| **Temperature scaling** | Rescaling logits with a positive temperature fitted on validation data. For one classifier this changes probabilities while preserving the predicted class. The Duo fits two coefficients to control how much each model contributes. |
+| **Softmax confidence and uncertainty** | Confidence is the softmax probability assigned to the class the method predicts. The paper’s main uncertainty score is one minus that confidence. |
+| **UQ-only** | An ablation that keeps the base model’s predicted class and uses the Duo’s probability for that class as confidence. It tests whether the sidekick improves uncertainty when the prediction stays fixed. |
+| **FLOP balance** | Sidekick inference FLOPs divided by base inference FLOPs, expressed as a percentage. The base alone is 0%. A 100% balance adds a second model of equal compute and doubles total model FLOPs. |
+| **Top-1 accuracy ↑** | The fraction of images whose highest-scoring class matches the ground truth. |
+| **Macro F1 ↑** | The average of per-class F1 scores, with every class given equal weight. The paper uses it for the class-imbalanced iWildCam evaluations. |
+| **Correctness prediction AUROC ↑** | Treats correct predictions as positives and errors as negatives. It measures how often a correct prediction gets higher confidence than an error, with ties counted as half. A value of 0.5 indicates chance ranking and 1 is perfect. |
+| **Coverage and risk** | Sort images from most to least confident. Coverage is the fraction on which the model still predicts. Risk is the error rate on those retained images. |
+| **AURC ↓** | Area under the risk–coverage curve, computed by averaging risk as progressively more predictions are kept. Lower is better. |
+| **SAC@98 ↑** | The largest fraction of test images the model can keep while achieving at least 98% accuracy on the retained predictions. |
+| **Negative log-likelihood (NLL) ↓** | The average negative log of the probability assigned to the true class. It is the objective used to fit the Duo weights and a diagnostic for the extension. |
+| **Expected calibration error (ECE) ↓** | Groups predictions by confidence, then measures the gap between mean confidence and observed accuracy in each group, weighted by group size. |
+| **Brier score ↓** | The squared error between the predicted class probabilities and the true class encoded as a vector of zeros and a one. |
 
-The released code refers to dataset YAML files, model and pairing CSVs, and checkpoints that the public repository does not include. Part A will supply its own experiment configuration and document any changes needed to run the reference code. The [upstream repository](https://github.com/timgzhou/asymmetric-duos) has the authors’ original README and citation.
+## Part A · Reproduction with the authors’ code
+
+On `partA`, we will reconstruct the splits, preprocessing, training, calibration, and evaluation as far as the paper and code specify them. The released split code uses seed 42 for ImageNet-1K and Caltech-256. We will record the actual sample IDs and class order so the same splits can be reused. Where settings are missing, including the public release’s omitted configuration files, we will record our choices and distinguish them from settings we can verify.
+
+We will keep the released evaluator’s behavior visible in the results. For example, it reuses the UQ-only confidence for the full weighted Duo, while §3.1 specifies that the full Duo scores confidence on its own predicted class. We will document this discrepancy and label any results computed with the paper’s definition. Part A covers the original static method and its ablations. The dynamic extension is reserved for Part B.
+
+## Part B · Paper-only reproduction with a hosted LLM
+
+On `partB-LLM`, a hosted LLM will reimplement the original method using the paper and appendix as its only methodological sources. We will give it the PDF and the chosen experimental scope in a fresh session. While it writes and revises the implementation, **the LLM may not browse the internet or consult the authors’ source code**.
+
+1. **Restrict the model’s tools and inputs.** Turn off web browsing, search, GitHub and other connectors, external retrieval, and network-enabled execution tools. Keep the session separate from the repository and previous project chats. Give it no access to the authors’ code, Part A files or results, or this README.
+2. **Keep uncertainty visible.** Instruct the LLM to identify unspecified details and record its assumptions. The team will avoid consulting the reference source or web while developing the independent implementation. Datasets, framework packages, and public pretrained weights can be prepared separately for running the code.
+3. **Freeze the reproduction.** Log the hosted model, tool settings, prompts, assumptions, human edits, split IDs, and results. Freeze the paper-only implementation and its static baseline before sharing Part A results or beginning the extension.
+
+### Part B extension · Dynamic temperature weights
+
+**Can changing the two models’ weights per image improve the ranking of unreliable predictions?** After freezing the independent reproduction, we will test a small gate that uses the two models’ confidence margins and whether they agree. It learns from cached validation logits and uses the same base and sidekick checkpoints as the static Duo.
+
+Let $z_L(x)$ and $z_S(x)$ be the base and sidekick logits, $s$ the sum of the fitted positive static weights, and $a_0$ the base’s share of that sum. The feature vector $\phi(x)$ contains the gap between each model’s top two predicted probabilities and an indicator of whether their predicted classes agree.
+
+$$
+a(x)=\sigma\!\left(\operatorname{logit}(a_0)+\beta^\top\phi(x)\right),
+\qquad
+z_{\mathrm{dyn}}(x)=s\left[a(x)z_L(x)+(1-a(x))z_S(x)\right].
+$$
+
+With $\beta=0$, the gate recovers the static Duo. Holding $s$ fixed lets us test how reallocating weight between models affects the predictions. We will fit with regularized validation NLL and compare the static and dynamic Duos on the same held-out examples. AURC is our primary extension metric. We will also report the other core metrics, NLL, and gate overhead. A confidence-only ablation will test the contribution of the agreement feature. ImageNetV2 uses the gate fitted on ImageNet-1K.
+
+## Repository guide
+
+| Branch | Contents |
+| --- | --- |
+| `main` | This research overview and the assets it references. |
+| `partA` | The authors’ released code and our work to replicate the original experiments. |
+| `partB-LLM` | The independent paper-only reproduction, its isolation record, and the dynamic-weight extension. |
