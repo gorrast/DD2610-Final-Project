@@ -1,1 +1,5 @@
 _personal/*
+.venv/
+outputs/
+.env
+.ipynb_checkpoints/

@@ -74,7 +74,12 @@ def train_model(config, root_dir, dataset_name, device, model_state=None, finetu
     for epoch in range(config["num_epochs"]):
         model.train()
         epoch_loss = 0
-        for batch in dataloaders["train"]:
+        batches = dataloaders["train"]
+        if os.environ.get("DD2610_PROGRESS") == "1":  # opt-in per-batch progress bar (display only)
+            from ray.experimental.tqdm_ray import tqdm
+            batches = tqdm(batches, unit="batch",
+                           desc=f"{'FT' if finetune else 'LP'} lr={config['learning_rate']:.1e} epoch {epoch + 1}/{config['num_epochs']}")
+        for batch in batches:
             x, y = batch
             x, y = x.to(device), y.to(device)
             optimizer.zero_grad()

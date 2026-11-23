@@ -106,8 +106,10 @@ class Caltech256Dataset(Dataset):
             "train": DataLoader(train_dataset, batch_size=batch_size, num_workers=num_workers, shuffle=True,
                                 pin_memory=True,prefetch_factor=4,
                               persistent_workers=True,drop_last=True,),
+            # persistent_workers: Windows spawns workers (~1 min for 8), so don't restart them every epoch.
             "val": DataLoader(val_dataset, batch_size=batch_size, num_workers=num_workers, shuffle=False,
-                                pin_memory=True,prefetch_factor=4,),
+                                pin_memory=True,prefetch_factor=4,
+                              persistent_workers=True,),
             "test": DataLoader(test_dataset, batch_size=batch_size, num_workers=num_workers, shuffle=False,
                                 pin_memory=True,prefetch_factor=4,),
             "ood_test": None,

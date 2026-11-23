@@ -1,10 +1,14 @@
 from torchvision import transforms
 
+# A named function rather than a lambda so Windows DataLoader workers (spawned, not forked) can pickle it.
+def _to_rgb(x):
+    return x.convert("RGB")
+
 def get_transforms(resize=224):
     # Training transforms for iWildCam with RandAugment
     train_transform = transforms.Compose([
         transforms.Resize((resize, resize)),
-        transforms.Lambda(lambda x: x.convert('RGB')),
+        transforms.Lambda(_to_rgb),
         transforms.RandAugment(),
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.ToTensor(),
@@ -15,7 +19,7 @@ def get_transforms(resize=224):
     # Validation and test transforms
     val_transform = transforms.Compose([
         transforms.Resize((resize, resize)),
-        transforms.Lambda(lambda x: x.convert('RGB')),
+        transforms.Lambda(_to_rgb),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406],
                              std=[0.229, 0.224, 0.225])
@@ -29,12 +33,12 @@ def get_transforms(resize=224):
 
 def augment_then_model_transform(model_transform):
     vt_transform = transforms.Compose([
-        transforms.Lambda(lambda x: x.convert("RGB")),
+        transforms.Lambda(_to_rgb),
         model_transform
     ])
     return {
         "train": transforms.Compose([
-            transforms.Lambda(lambda x: x.convert("RGB")),
+            transforms.Lambda(_to_rgb),
             transforms.RandAugment(),
             transforms.RandomHorizontalFlip(p=0.5),
             model_transform
