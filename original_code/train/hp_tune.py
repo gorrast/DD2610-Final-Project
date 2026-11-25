@@ -236,7 +236,7 @@ def main():
     config_ft = {
         "model_name": args.model_name,
         "learning_rate": tune.loguniform(1e-6, 3e-4),
-        "weight_decay": 1e-6,  # fixed: we tune only the learning rate (authors searched 1e-8 to 1e-5)
+        "weight_decay": tune.loguniform(1e-8, 1e-5),
         "num_epochs": training_cfg["training"]["num_epochs_ff"],
         "num_workers": training_cfg["training"]["num_workers"],
         "batch_size": training_cfg["training"]["batch_size"],
