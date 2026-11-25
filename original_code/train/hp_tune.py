@@ -154,7 +154,7 @@ def main():
     else:
         config_lp = {
             "model_name": args.model_name,
-            "learning_rate": tune.loguniform(1e-4, 1e-2),
+            "learning_rate": tune.grid_search([1e-4, 4.6e-4, 2.2e-3, 1e-2]),  # 4 log-spaced points over the authors' range
             "weight_decay": 0,
             "num_epochs": training_cfg["training"]["num_epochs_lp"],
             "num_workers": training_cfg["training"]["num_workers"],
@@ -171,7 +171,7 @@ def main():
                 finetune=False
             ),
             config=config_lp,
-            num_samples=4,
+            num_samples=1,  # each grid point runs once
             resources_per_trial={"cpu": 4, "gpu": 1},
             scheduler=ASHAScheduler(max_t=config_lp["num_epochs"],grace_period=config_lp["num_epochs"],metric=validation_metric, mode="max"),
             storage_path=os.path.abspath("./ray_results"),
@@ -235,7 +235,7 @@ def main():
     best_state = torch.load(lp_checkpoint_dst)
     config_ft = {
         "model_name": args.model_name,
-        "learning_rate": tune.loguniform(1e-6, 3e-4),
+        "learning_rate": tune.grid_search([1e-6, 6.7e-6, 4.5e-5, 3e-4]),  # 4 log-spaced points over the authors' range
         "weight_decay": 1e-6,  # fixed: we tune only the learning rate (authors searched 1e-8 to 1e-5)
         "num_epochs": training_cfg["training"]["num_epochs_ff"],
         "num_workers": training_cfg["training"]["num_workers"],
@@ -255,7 +255,7 @@ def main():
             finetune=True
         ),
         config=config_ft,
-        num_samples=args.num_samples,
+        num_samples=1,  # each grid point runs once
         resources_per_trial={"cpu": 4, "gpu": 1},
         scheduler=ASHAScheduler(max_t=config_ft["num_epochs"],grace_period=config_ft["grace_period"],metric=validation_metric, mode="max"),
         storage_path=os.path.abspath("./ray_results"),
